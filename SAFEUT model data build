@@ -1,0 +1,191 @@
+---
+title: "INLAModelDataPrep3sept2021"
+authors: Simon Rich & Doug
+date: "9/3/2021"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#LIBRARIES
+
+```{r libraries}
+library(dplyr)
+library(lubridate)
+library(timetk)
+library(ggpubr)
+library(tidyr)
+library(sf)
+library(spdep)
+library(tmap)
+library(INLA)
+library(INLAutils)
+
+```
+# Sept4 Current problem/issue is introduction of some n/a s where there shouldn't be any.  
+
+## # DATA IN
+```{r data, echo=FALSE}
+start <- Sys.time()
+
+setwd ("C:/Doug/projects/suicide/utah/SafeUT")
+load("data_for_inla2a.RData")
+ls()
+# summary(dat_all$date)
+
+# `%notin%` <- Negate(`%in%`)
+
+
+dat_Density<- read.csv("C:/Doug/projects/suicide/utah/SAFEUT/Density.csv")
+# names(dat_Density)
+# str(dat_Density)
+dat_Density$GEOID <- substr(dat_Density$GEOID_Data,8,19)
+#NROW(dat_Density)
+dat_Density <- dat_Density %>% dplyr::select("GEOID",  "ALAND",  "GEOID_Data"  ,         "PopDensity" ,    "PopDensitySqKM" )
+
+#dat_all$date <- ymd(dat_all$date) 
+#summary(dat_all$date)
+#  https://stackoverflow.com/questions/36244878/adding-value-from-one-data-frame-to-another-data-frame-by-matching-a-variable
+
+
+#following is already merged in in previous job
+# dat_demo <- st_read("C:/Doug/projects/suicide/utah/SafeUT/QualitativeBlockGroups/CensusBKs.shp")
+# names(dat_all)
+#  summary(dat_all)
+
+# dat_demox <- merge(x = dat_Density, y = dat_demo, by.x = "GEOID_Data", by.y = "GEOID_Data", all.x = TRUE, all.y = TRUE)
+
+dat_demo2 <- merge(x = dat_Density, y = dat_all, by.x = "GEOID_Data", by.y = "GEOID_Data", all.x = FALSE, all.y = TRUE)
+summary(dat_demo2)
+
+
+#CREATE VAR INDICATE IF IN COVID ERA
+dat_demo2$covid <- ifelse(dat_all$date<= "2020-03-01",0,1)
+summary(dat_demo2$covid)
+# str(dat_all)
+# head(dat_demo$GEOID_Data)
+# merge two data frames by ID
+# names(dat_all)
+#  https://stackoverflow.com/questions/36244878/adding-value-from-one-data-frame-to-another-data-frame-by-matching-a-variable
+NROW((dat_all$GEOID))
+NROW((dat_demo2$GEOID))
+NROW(unique(dat_all$GEOID))
+NROW(unique(dat_demo2$GEOID))
+#########################
+names(dat_demo2)
+```
+
+```{r aggregate , echo=FALSE}
+
+dat_ts <- dat_demo2 %>%
+  group_by(GEOID_Data) %>%
+  summarize_by_time(Z.score = max(Z.Score),
+                    fips = max(fips),
+                    TotPop = max(TotPop),
+                    Shape_Area = max(Shape_Area),
+                    CBGpop = max(CBGpop),
+                    Age10to19 = max(Age10to19),
+                    rawInfectCounty = mean(inf2),
+                    StdDegree = max(StdDegree),
+                    StdHHPov = max(StdHHPov),
+                    StdUnemplo = max(StdUnemplo),
+                    StdMobile = max(StdMobile),
+                    StdIns19 = max(StdIns19),
+                    StdNonWhit = max(StdNonWhit),
+                    infratePer = mean(infratePer1000),  #maybe max?
+                    PopDensitySqKM = max(PopDensitySqKM),
+                    idarea = max(idarea),
+                    anxiety = sum(anxiety),
+                    depression = sum(depression),
+                    crisis = sum(crisis),
+                    total = sum(total),
+                    county = max(county),
+                    slc = max(SLC_Sch_District),
+                    .date_var = date,
+                    .by = "month")
+
+
+dat_ts$idtime <- as.numeric(year(dat_ts$date)-2019) * 12 + month(dat_ts$date)
+#table(dat_ts$idtime, year(dat_ts$date))
+
+# 
+# dat_tswkly <- dat_all %>%
+#   group_by(GEOID_Data) %>%
+#   summarize_by_time(NATIONAL_M = max(Z.Score),
+#                     providerCo = max(providerCount),
+#                     fips = max(fips),
+#              #       TotPop = max(TotPop),
+#                     Age10to19 = max(Age10to19),
+#               #      MedIncome = max(MedIncome),
+#               #      StdHS = max(StdHS),
+#                #     StdBA = max(StdBA),
+#                 #    StdGrad = max(StdGrad),
+#                     StdDegree = max(StdDegree),
+#                     StdHHPov = max(StdHHPov),
+#                     StdUnemplo = max(StdUnemplo),
+#                     StdMobile = max(StdMobile),
+#                     StdIns19 = max(StdIns19),
+#                     StdNonWhit = max(StdNonWhit),
+#                     PopSexRati = max(PopSexRati),
+#                     infratePer = mean(infratePer1000),
+#                     idarea = max(idarea),
+#                     anxiety = sum(anxiety),
+#                     depression = sum(depression),
+#                     crisis = sum(crisis),
+#                     total = sum(total),
+#                     county = max(county),
+#                     trump = max(Trump),
+#                     slc = max(SLC_Sch_District),
+#                     .date_var = date,
+#                     .by = "week")
+# 
+# dat_ts$idtimewk <- as.numeric(year(dat_ts$date)-2019) * 52 + week(dat_ts$date)
+# table(dat_ts$idtimewk, (dat_ts$date))
+
+# summary(dat_demo2)
+
+
+dat_covid <- dat_demo2 %>%
+  group_by(GEOID_Data, covid)%>%        
+    summarise  (   Z.score = max(Z.Score),
+                    fips = max(fips),
+                    #       TotPop = max(TotPop),
+                    Shape_Area = max(Shape_Area),
+                    CBGpop = max(CBGpop),
+                    Age10to19 = max(Age10to19),
+                    StdDegree = max(StdDegree),
+                    StdHHPov = max(StdHHPov),
+                    StdUnemplo = max(StdUnemplo),
+                    StdMobile = max(StdMobile),
+                    StdIns19 = max(StdIns19),
+                    StdNonWhit = max(StdNonWhit),
+                    PopSexRati = max(PopSexRati),
+                    rawInfectCounty = mean(inf2),
+                    infratePer = mean(infratePer1000),
+                    PopDensitySqKM = max(PopDensitySqKM),
+                    idarea = max(idarea),
+                    anxiety = sum(anxiety),
+                    depression = sum(depression),
+                    crisis = sum(crisis),
+                    county = max(county),
+                    slc = max(SLC_Sch_District),
+                    covid = max(covid),
+                    total = sum(total)
+                  )
+
+summary(dat_covid)
+
+
+save(dat_ts, dat_covid, dat_nb, dat_demo2, shp, file = "summeddata_for_inla2a.RData")
+
+summary(dat_ts$infratePer)
+
+endtime <- Sys.time()
+elapsed = endtime - start
+print(elapsed)
+print(endtime)
+```
