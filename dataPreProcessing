@@ -1,0 +1,313 @@
+---
+title: "SAFEUT PreProcessing"
+author: "Mostly Simon some Rich, some Doug"
+date: "5/18/2021"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries
+
+```{r libraries}
+library(sf)
+library(tmap)
+library(dplyr)
+library(ggpubr)
+library(ggcorrplot)
+library(skimr)
+library(timetk)
+library(tidyr)
+library(lubridate)
+library(spdep)
+library(sjstats)
+library(gtools)
+
+```
+
+## Read in Data
+
+```{r data, echo=FALSE}
+start <- Sys.time()
+setwd ("C:/Doug/projects/suicide/utah/SafeUT/")
+dohioy <- read.csv("patchedData.csv")
+#dohio2 <- read.csv("datapatch4_AugNovDec2020.csv")
+mh <- read.csv("mhFIPS.csv")
+infection <- read.csv("CovidInfRateCountyc.csv")
+str(infection)
+summary(infection$inf2)
+summary(infection$infratePer1000)
+# sort by county and date
+#summary(infection)
+NROW(infection)
+# convert imported char date to numeric
+infection$date <- lubridate::mdy(infection$date ) #convert to dat_counts_demo3 format
+infection2 <- infection[order(infection$county, infection$date),]
+
+ infection2 <- infection2 %>% 
+   filter(year(date) > 2018)
+ infection2 <- infection %>% 
+   filter(year(date) < 2021)
+ summary(infection2$date)
+NROW(infection2) 
+table(infection2$county)
+summary(infection2)
+slcsd <- read.csv("SLC_School_Dist.csv")
+slcsd <- slcsd%>% dplyr::select( -ï..OID_)
+dat_demo <- st_read("./QualitativeBlockGroups/CensusBKs.shp")
+
+############ add value to mh vars for dagget with no providers
+#summary(as.numeric(mh$Z.Score))
+mh$Z.Score <- as.numeric(mh$Z.Score)
+mh$Z.Score[is.na(mh$Z.Score)] <- -3
+summary((mh$Z.Score))
+# drop provider count in favor of national ranked z score
+names(mh)
+mh <- mh%>% dplyr::select( -ï..State)
+
+dohioy$date <- lubridate::mdy(dohioy$date) # convert imported char date to numeric
+# append patch data to orig
+#dohioX = smartbind(dohioy, dohio2)
+
+# in case you patchecd the data, write out the combo file
+#write.csv(dohioX,"./dohioX.csv", row.names = FALSE)  
+
+#  QC
+# NROW(dohioy)
+# NROW(dat_demo)
+# NROW(dohio)
+#dohio <- dohioX
+#dohio$date <- lubridate::mdy(dohio$date )
+# summary(dohio$date)
+# names(dohio)
+# str(dohio)
+
+
+######## limit to 2019+
+# 
+ dat <- dohioy %>% 
+   filter(year(date) > 2018)
+
+```
+
+```{r processing, echo=TRUE}
+# if using patched data then adjust the dohio name
+# dat <- dohioy
+# names(dat)
+options(dplyr.summarise.inform = TRUE)
+dat2 <- dat %>% 
+  group_by(date, GEOID_Data)  %>% 
+  summarise (anxiety = sum(anxiety1),
+            depression = sum(depression1),
+            crisis = sum(crisis1),
+             total = n() ) 
+
+
+`%notin%` <- Negate(`%in%`)
+
+# names(dat_demo)
+# NROW(dat_demo$GEOID_Data)
+# names(dat2)
+# NROW(dat2$GEOID_Data)
+
+dat_demo$GEOID_Data %notin% dat2$GEOID_Data
+
+extra_geoid <- dat_demo$GEOID[which(dat_demo$GEOID_Data %notin% dat2$GEOID_Data)]
+# names(extra_geoid)  #empty set
+# NROW(extra_geoid$GEOID_Data)
+
+
+extra_bg <- data.frame(date = ymd("2019-01-01"), 
+                       GEOID_Data = extra_geoid,
+                       anxiety = 0, depression = 0, 
+                       crisis = 0, total = 0
+                       )
+
+dat2 <- rbind(dat2, extra_bg)
+
+## Anxiety - note: fill = 0 
+dat3 <- dat2 %>%
+  pivot_wider(id_cols = GEOID_Data, 
+              names_from = date,
+              values_from = anxiety,
+              values_fill = 0) 
+
+dat_anx <- dat3 %>% 
+  pivot_longer(!c(GEOID_Data), 
+               names_to = 'date',
+               values_to = 'anxiety')
+
+
+## Depression     
+dat3 <- dat2 %>%
+  pivot_wider(id_cols = GEOID_Data, 
+              names_from = date,
+              values_from = depression,
+              values_fill = 0) 
+
+dat_dep <- dat3 %>% 
+  pivot_longer(!c(GEOID_Data), 
+               names_to = 'date',
+               values_to = 'depression')
+
+## Crisis
+dat3 <- dat2 %>%
+  pivot_wider(id_cols = GEOID_Data, 
+              names_from = date,
+              values_from = crisis,
+              values_fill = 0) 
+
+dat_cri <- dat3 %>% 
+  pivot_longer(!c(GEOID_Data), 
+               names_to = 'date',
+               values_to = 'crisis')
+
+## Total
+dat3 <- dat2 %>%
+  pivot_wider(id_cols = GEOID_Data, 
+              names_from = date,
+              values_from = total,
+              values_fill = 0) 
+
+dat_tot <- dat3 %>% 
+  pivot_longer(!c(GEOID_Data), 
+               names_to = 'date',
+               values_to = 'total')
+dat_tot$date <- lubridate::ymd(dat_tot$date ) # convert  char date to numeric
+dat_cri$date <- lubridate::ymd(dat_cri$date ) # convert  char date to numeric
+dat_dep$date <- lubridate::ymd(dat_dep$date ) # convert  char date to numeric
+dat_anx$date <- lubridate::ymd(dat_anx$date ) # convert  char date to numeric
+
+#demo_cols <- c(9, 12:13, 21:49)
+#demo_cols <- c(1:30, 36)
+
+## Merge demo and counts
+dat_counts <- data.frame(dat_anx,
+                         depression = dat_dep$depression,
+                         crisis = dat_cri$crisis,
+                         total = dat_tot$total)
+                         summary(dat_counts)
+summary(dat_demo)
+
+
+dat_counts_demo <- merge(dat_counts, dat_demo,all.x= TRUE, all.y = TRUE, by = "GEOID_Data")
+
+
+#how many block groups
+#length(unique(dat_counts_demo$GEOID_Data))
+
+#names(dat_counts_demo)
+dat_counts_demo$fips <- substr(dat_counts_demo$GEOID_Data,8,12)
+#unique(dat_counts_demo$fips)
+
+# drop with missing counties / fips
+dat_counts_demo <- dat_counts_demo[ which(dat_counts_demo$fips != ''), ]
+
+dat_counts_demo3 <- merge(dat_counts_demo, mh ,all.x= TRUE, all.y = TRUE, by = "fips")
+
+# summary(dat_counts_demo3$date)
+
+names(dat_counts_demo3)
+NROW(dat_counts_demo3)
+dat_counts_demo3$county <- dat_counts_demo3$County
+summary(dat_counts_demo3)
+dat_counts_demo3 <- dat_counts_demo3%>% dplyr::select( -County,  -County.Value)
+
+#str(infection2)
+#str(dat_counts_demo3)
+dat_counts_demo3$county <- toupper(dat_counts_demo3$county)
+#dat_counts_demo3 <- dat_counts_demo3%>% dplyr::select( -County,  -County.Value)
+#head(infection)
+#dat_counts_demo3$date <- lubridate::ymd(dat_counts_demo3$date ) 
+dat_counts_demo4 <- merge(dat_counts_demo3, infection2 , all.x= TRUE, 
+                          all.y = TRUE, by = c("county", "date"))
+summary(dat_counts_demo4)
+
+# no longer a concern when infections fully populated (as with version 3)
+# garbage <- which(is.na(as.numeric(dat_counts_demo4$dailyINF)))
+# garbage <- is.na(dat_counts_demo4$infratePer1000)
+# summary(garbage)
+
+dat_counts_demo4$CBGpop <- dat_counts_demo4$TotPop 
+#dat_counts_demo4 <- dat_counts_demo4%>% rename( pop2 = countypop )
+# dat_counts_demo4 <- dat_counts_demo4%>% dplyr::select( -inf2)  # I WANT RAW INFECTION COUNTS, THEREFORE KEEP
+# dat_counts_demo4$date <- lubridate::mdy_hm(dat_counts_demo4$date ) #
+#str(dat_counts_demo4)
+
+dat_counts_demo4 <- merge(dat_counts_demo4, slcsd , all.x= TRUE, 
+                          all.y = TRUE, by = "GEOID_Data")
+
+#summary(dat_counts_demo4)
+# names(dat_counts_demo4)
+
+
+# summary(dat_counts_demo4$SLC_Sch_District)
+# zero fill missing (all the non-SLC school districts are missing up till now
+dat_counts_demo4$SLC_Sch_District[is.na(dat_counts_demo4$SLC_Sch_District)] <- 0
+# summary(dat_counts_demo4$SLC_Sch_District)
+
+
+##########  QC & debugging stuff  ############
+#names(dat_counts_demo4)
+#summary(as.numeric(dat_counts_demo4$infratePer1000))
+#which(is.na(as.numeric(dat_counts_demo4$dailyINF)))
+#id <- which(is.na(as.numeric(dat_counts_demo4$dailyINF)))
+#table(dat_counts_demo4$fips[id])
+#table(dat_counts_demo4$GEOID_Data)
+#dat_counts_demo4 <- dat_counts_demo4%>% select( -dailyINF)
+#length(dat_counts_demo4$GEOID_Data)
+#which(table(dat_counts_demo4$GEOID_Data) < 688)
+
+```
+
+# set up spatial index, neighbors
+
+```{r spatialIndex, echo=TRUE}
+# previous code
+## Set up spatial index
+shp <- st_read("QualitativeBlockGroups/CensusBKs.shp")
+dat_1 <- dat_counts_demo4 %>%
+  filter(date == "2019-01-02")
+
+# length(shp$GEOID_Data)
+# length(dat_1$GEOID_Data)
+dat_1 <- dat_1[ which(dat_1$GEOID_Data != ''), ]
+
+
+#names(shp)
+shp$idarea <- as.numeric(1:nrow(shp))
+
+## Merge ids
+shp2 <- shp %>%
+  dplyr::select(GEOID_Data, idarea) %>%
+  st_drop_geometry()
+
+
+dat_all <- merge(dat_counts_demo4, shp2, by.x = "GEOID_Data", by.y = "GEOID_Data")
+#summary(dat_all)
+dat_sp <- as_Spatial(shp)
+
+
+dat_nb <- poly2nb(dat_sp) ## if Missing units then below
+#dat_nb <- graph2nb(gabrielneigh(coordinates(dat_sp)), sym = TRUE)
+dat_nb
+
+nb2INLA("map.adj", dat_nb)
+```
+
+# export data
+```{r xport}
+save(dat_all, shp, dat_nb, file = "data_for_inla2x.RData")
+#stop()
+# plot(st_geometry(shp2))
+#names(dat_counts_demo4)
+gc()
+endtime <- Sys.time()
+elapsed =  endtime - start
+print(elapsed)
+print(endtime)
+```
