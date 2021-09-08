@@ -1,7 +1,7 @@
 ---
-title: "Pre-Postcovid_Crisis_Aug20_2021"
+title: "Pre-Postcovid_Crisis_Sept5_2021_Data_thru_Oct_2020"
 author: "Simon, Rich, and Doug"
-date: "8/20/2021"
+date: "9/5/2021"
 output:
   html_document: default
   word_document: 
@@ -36,18 +36,21 @@ library(rgdal)
 
 # DATA IN
 
-```{r data, echo=FALSE, warnings=FALSE} 
+```{r data, echo=TRUE, warnings=FALSE} 
+start_time <- Sys.time()
 setwd ("C:/Doug/projects/suicide/utah/SafeUT")
 load("summeddata_for_inla2a.RData")
 ls()
 summary(dat_ts$date)
 NROW(dat_ts)
+dat2 <- complete.cases(dat_ts$date)
+NROW(dat2)
+
 
 ```
 # totalwt = weighted count of encounters
 # model setup
 ```{r modelsetup, echo=TRUE, warnings=FALSE}
-# some code to search for missing... INLA can't handle missing and deleting it gives funky results
 # is.na(dat_ts$crisis) # The is.na() function returns a logical vector. The vector is TRUE in case
                  # of a missing value and FALSE in case of an observed value
 # which(is.na(dat_ts$crisis)) # The which() function returns the positions with missing values in your vector.
@@ -69,13 +72,16 @@ NROW(dat_ts)
 # whole3 <- dat_ts[ which(dat_ts$crisis != ''), ]
 # NROW(whole3)
 # dat_ts <- whole3
+
+
+
 # names(dat_ts)
 # summary(dat_ts$idarea)
 # unique(dat_covid$Z.score)
 # ls()
 # write.csv(dat_covid,"./dat_covid.csv", row.names = FALSE)
 
-# back to production code
+
 dat_covid$Age10to19 <- ifelse(dat_covid$Age10to19 < 1, 1, dat_covid$Age10to19)
 dat_ts$Age10to19 <- ifelse(dat_ts$Age10to19 < 1, 1, dat_ts$Age10to19)
 dat_ts$covid <- ifelse(dat_ts$date<= "2020-03-01",0,1)
@@ -132,7 +138,7 @@ summary(dat_ts)
 
 ```{r fullZInfModel, echo=TRUE, message=TRUE, warning=FALSE, paged.print=TRUE}
 
-start_time <- Sys.time()
+
 names(dat_ts)
 dat_ts$ZStdUnemplo <- scale(dat_ts$StdUnemplo, center = TRUE, scale = TRUE)
 dat_ts$ZStdDegree  <- scale(dat_ts$StdDegree, center = TRUE, scale = TRUE)
@@ -156,11 +162,11 @@ fc2 <- crisis     ~   ZStdDegree  +
  f(idtime, model = "rw1")
 
 rescTSz <- inla(fc2,
-              family = "poisson", data = dat_ts,
+              family = "poisson", data = dat_ts2,
               E = Ei, control.predictor = list(compute = TRUE),
               control.compute = list(dic = TRUE, waic = TRUE),
               control.inla = list(strategy = "adaptive",                                  int.strategy="eb"),
-              verbose = TRUE
+              verbose = FALSE
 )
 
 
@@ -205,20 +211,16 @@ plot_random_effects(rescTSz)
 
 # names(rescTSz)
 summary(rescTSz)
-out <- exp(rescTSz$summary.fixed)
-out
+# out <- exp(rescTSz$summary.fixed)
+# out
 # Add mean and 95% CI to dat2:
-dat_ts$RR <- rescTSz$summary.fitted.values[, "mean"]
+# dat_ts2$RR <- rescTSz$summary.fitted.values[, "mean"]
 # dat_ts$LL <- rescTS$summary.fitted.values[, "0.025quant"]
 # dat_ts$UL <- rescTS$summary.fitted.values[, "0.975quant"]
 
 summary(rescTSz$summary.fitted.values)
 # 
-
-##################################################################
-# # calc credible interval probability nonzero for variables 
-##################################################################
-#'StdDegree'
+# # calc credible interval probability nonzero for variable 'StdDegree'
 ZStdDegreealpha <- rescTSz$marginals.fixed$ZStdDegree
 # marg <- data.frame(inla.smarginal(ZStdDegreealpha))
 ## Probability StdDegree < 0
@@ -318,6 +320,12 @@ inla.pmarginal(0, ZinfratePerZStdHHPovalpha)
 ## Probability interaction  > 0
 1 - inla.pmarginal(0, ZinfratePerZStdHHPovalpha)
 
+
+
+
+# library(sjPlot)
+
+
 # plot_model(rescTSz$marginals.fixed, transform = NULL, show.values = TRUE, axis.labels = “”, value.offset = .4)
 
 ```
@@ -352,9 +360,46 @@ p1 <- ggline(myx, x = "ZStdHHPov", y = "theta",
              col = "ZinfratePer", numeric.x.axis = TRUE, 
              size = 1.5, plot_type = 'l',
              xlab = "ZHH Poverty",
-             ylab = "Relative rate") + 
+             ylab = "Relative Rate") + 
   geom_hline(yintercept = 1, linetype = "dashed") +
-  ggtitle("ZInteraction Poverty/ZInfection")
+  ggtitle("Interaction Infections / Poverty")
 print(p1)
 
 ```
+
+
+
+```{r tmapstuf}
+# shp$deltaRR <- (dat_ts$RR[ which(dat_ts$date=='2020-10-01')] - dat_ts$RR[ which(dat_ts$date=='2019-10-01')])
+# shp$RR1 <-dat_ts$RR[ which(dat_ts$date=='2020-10-01')]
+# shp$RR0 <-dat_ts$RR[ which(dat_ts$date=='2019-10-01')]
+# #
+# shp$zpopdensity <- dat_ts$zPopDensity[which(dat_ts$date=='2019-10-01')]
+# # NROW(shp)
+# # class(shp)
+# shp.spdf <- as_Spatial(shp)
+#  writeOGR(shp.spdf, ".", "RRshpsa",
+#            driver = "ESRI Shapefile")
+# # names(shp)
+# summary(shp$deltaRR)
+#  summary(shp$RR1)
+#  summary(shp$RR0)
+#  
+# tm_shape(shp) +
+#   tm_fill("RR0", palette = "-magma", midpoint = 1, style = "fixed",
+#             breaks = c(0,0.5, 1.0, 1.5, 2.0, 2.5, 3.0)) +
+#   tm_layout(main.title = "Crisis RR, Oct 2019")
+# #dev.off()
+# #pdf("safeUT_Oct20CrisisRR.pdf")
+# tm_shape(shp) +
+#   tm_fill("RR1", palette = "-magma", midpoint = 1, style = "fixed",
+#             breaks = c(0,0.5, 1.0, 1.5, 2.0, 2.5, 3.0)) +
+#   tm_layout(main.title = "Crisis RR, Oct 2020")
+##############################
+gc()
+end_time <- Sys.time()
+elapsed = end_time - start_time
+print (elapsed)
+print(end_time)
+```
+
