@@ -1,0 +1,360 @@
+---
+title: "Pre-Postcovid_Crisis_Aug20_2021"
+author: "Simon, Rich, and Doug"
+date: "8/20/2021"
+output:
+  html_document: default
+  word_document: 
+    toc: yes
+  knit: (function(inputFile, encoding) { rmarkdown::render(inputFile, encoding = encoding, output_file = paste0(substr(inputFile,1,nchar(inputFile)-4),Sys.Date(),'.doc')) })
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#prePostCovid_CBG_Crisis_by_locationenabled2
+
+```{r LIBRARIES, echo=FALSE}
+#LIBRARIES
+library(dplyr)
+library(lubridate)
+library(data.table)
+library(timetk)
+library(ggpubr)
+library(tidyr)
+library(sf)
+library(spdep)
+library(tmap)
+library(INLA)
+library(INLAutils)
+library(rgdal)
+#library(emmeans)
+```
+
+# DATA IN
+
+```{r data, echo=FALSE, warnings=FALSE} 
+setwd ("C:/Doug/projects/suicide/utah/SafeUT")
+load("summeddata_for_inla2a.RData")
+ls()
+summary(dat_ts$date)
+NROW(dat_ts)
+
+```
+# totalwt = weighted count of encounters
+# model setup
+```{r modelsetup, echo=TRUE, warnings=FALSE}
+# some code to search for missing... INLA can't handle missing and deleting it gives funky results
+# is.na(dat_ts$crisis) # The is.na() function returns a logical vector. The vector is TRUE in case
+                 # of a missing value and FALSE in case of an observed value
+# which(is.na(dat_ts$crisis)) # The which() function returns the positions with missing values in your vector.
+
+# https://stackoverflow.com/questions/28008177/r-language-how-to-print-the-first-or-last-rows-of-a-data-set/28008180
+# n <- nrow(dataset); dataset[(n-10):n, ]
+
+#  missing <- dat_ts[is.na(dat_ts$infratePer), ]         
+#  n <- nrow(missing); missing[(n-10):n, ]
+# summary(as.numeric(missing$crisis))
+# summary((missing$date))
+# str(missing)
+# NROW(dat_ts)
+# whole <- complete.cases(dat_ts)
+# NROW(whole)
+# whole2 <- na.omit(dat_ts)
+# NROW(whole2)
+# https://statisticsglobe.com/subset-of-data-frame-rows-containing-na-in-r
+# whole3 <- dat_ts[ which(dat_ts$crisis != ''), ]
+# NROW(whole3)
+# dat_ts <- whole3
+# names(dat_ts)
+# summary(dat_ts$idarea)
+# unique(dat_covid$Z.score)
+# ls()
+# write.csv(dat_covid,"./dat_covid.csv", row.names = FALSE)
+
+# back to production code
+dat_covid$Age10to19 <- ifelse(dat_covid$Age10to19 < 1, 1, dat_covid$Age10to19)
+dat_ts$Age10to19 <- ifelse(dat_ts$Age10to19 < 1, 1, dat_ts$Age10to19)
+dat_ts$covid <- ifelse(dat_ts$date<= "2020-03-01",0,1)
+
+# SUMMER DUMMY
+dat_ts$summer <- ifelse((dat_ts$date>= "2020-06-01" & dat_ts$date<= "2020-08-01") | (dat_ts$date>= "2019-06-01" & dat_ts$date<= "2019-08-01") ,1,0)
+# summary(dat_ts)
+
+# EXPECTED COUNTS
+nbanx = sum(dat_covid$crisis) 
+total_popn = sum(dat_covid$Age10to19)
+nbanxTS = sum(dat_ts$crisis) 
+
+
+total_popnTS = sum(dat_ts$Age10to19)
+summary(nbanxTS)
+
+## standard  rate
+rs = nbanx / total_popn
+rsTS = nbanxTS / total_popnTS
+summary(dat_ts$crisis)
+#names(dat_ts)
+#print(rs)
+#Estimate the expected number and SIRSIR
+dat_covid$Ei <- rs * dat_covid$Age10to19
+dat_ts$Ei <- rsTS * dat_ts$Age10to19
+
+dat_covid$SIR <- dat_covid$crisis/ dat_covid$Ei
+dat_ts$SIR <- dat_ts$crisis/ dat_ts$Ei
+
+#summary(dat_ts$SIR)
+
+#INLA
+#Setup
+#Graph
+nb2INLA("map.adj", dat_nb)
+g <- inla.read.graph(filename = "map.adj")
+
+
+## From INLA Germany example
+u = 0.2/0.31
+alpha = 0.01
+
+rw1_prior <- list(theta = list(prior="pc.prec", param=c(u, alpha)))
+
+dat_covid$idtime <- (dat_covid$covid)
+
+NROW(dat_ts)  
+summary(dat_ts)
+# cor(dat_ts$infratePer,dat_ts$crisis)
+# tsplot(dat_ts$date,dat_ts$crisis)
+```
+
+
+```{r fullZInfModel, echo=TRUE, message=TRUE, warning=FALSE, paged.print=TRUE}
+
+start_time <- Sys.time()
+names(dat_ts)
+dat_ts$ZStdUnemplo <- scale(dat_ts$StdUnemplo, center = TRUE, scale = TRUE)
+dat_ts$ZStdDegree  <- scale(dat_ts$StdDegree, center = TRUE, scale = TRUE)
+dat_ts$ZStdMobile  <- scale(dat_ts$StdMobile, center = TRUE, scale = TRUE)
+dat_ts$ZStdHHPov   <- scale(dat_ts$StdHHPov, center = TRUE, scale = TRUE)
+dat_ts$ZinfratePer <- scale(dat_ts$infratePer, center = TRUE, scale = TRUE)
+dat_ts$ZStdNonWhit <- scale(dat_ts$StdNonWhit, center = TRUE, scale = TRUE)
+#dat_ts$ZrawInfectCounty <-  scale(dat_ts$rawInfectCounty, center = TRUE, scale = TRUE)
+# scale pop density
+dat_ts$zPopDensity <- scale(dat_ts$PopDensitySqKM)
+# summary(dat_ts$zPopDensity)
+
+# binary var left as zero one: https://stats.stackexchange.com/questions/59392/should-you-ever-standardise-binary-variables
+
+dat_ts2 <- dat_ts[ which(dat_ts$date < '2020-11-01'), ]
+ls()
+
+fc2 <- crisis     ~   ZStdDegree  +
+  ZStdMobile + ZStdNonWhit + Z.score + ZStdUnemplo+ zPopDensity+    slc+ summer +  ZinfratePer *  ZStdHHPov +
+  f(idarea, model = "bym2", graph = g) +
+ f(idtime, model = "rw1")
+
+rescTSz <- inla(fc2,
+              family = "poisson", data = dat_ts,
+              E = Ei, control.predictor = list(compute = TRUE),
+              control.compute = list(dic = TRUE, waic = TRUE),
+              control.inla = list(strategy = "adaptive",                                  int.strategy="eb"),
+              verbose = TRUE
+)
+
+
+# summary(rescTSz$summary.random)
+# 
+# save(rescTSz$summary.random, file = "dougs_groovy_model.RData")
+# 
+# save(rescTSz$summary.random$idarea, file = "dougs_groovy_model.RData")
+# 
+out <- exp(rescTSz$summary.fixed)
+out
+# save(rescTSz, file = "rescTSz.RData")
+# 
+# 
+# rdde <- rescTSz$summary.random
+# 
+# save(re, file = "C:/Doug/projects/suicide/utah/SafeUT/dougs_groovy_model.RData")
+# 
+# saveRDS(rescTSz, file = "rescTSz.RDS") 
+
+# 
+# library(ggplot2)
+# 
+# #load("dougs_groovy_model.RData")
+# 
+# time_re <- re$idtime
+# 
+# ggplot(time_re, aes(x = ID)) +
+#   geom_ribbon(aes(ymin = `0.025quant`, ymax = `0.975quant`), 
+#               fill = 'lightgray') +
+#   geom_line(aes(y = mean), size = 1.25) +
+#   scale_x_continuous("Months since Jan 2019") +
+#   scale_y_continuous("Time random effect") +
+#   theme_bw()
+# 
+
+plot_fixed_marginals(rescTSz)
+
+plot_hyper_marginals(rescTSz)
+
+plot_random_effects(rescTSz)
+
+# names(rescTSz)
+summary(rescTSz)
+out <- exp(rescTSz$summary.fixed)
+out
+# Add mean and 95% CI to dat2:
+dat_ts$RR <- rescTSz$summary.fitted.values[, "mean"]
+# dat_ts$LL <- rescTS$summary.fitted.values[, "0.025quant"]
+# dat_ts$UL <- rescTS$summary.fitted.values[, "0.975quant"]
+
+summary(rescTSz$summary.fitted.values)
+# 
+
+##################################################################
+# # calc credible interval probability nonzero for variables 
+##################################################################
+#'StdDegree'
+ZStdDegreealpha <- rescTSz$marginals.fixed$ZStdDegree
+# marg <- data.frame(inla.smarginal(ZStdDegreealpha))
+## Probability StdDegree < 0
+inla.pmarginal(0, ZStdDegreealpha)
+## Probability StdDegree > 0
+1 - inla.pmarginal(0, ZStdDegreealpha)
+
+# 
+# calc credible interval probability below zero for variable 'StdMobile'
+ZStdMobilealpha <- rescTSz$marginals.fixed$ZStdMobile
+# marg <- data.frame(inla.smarginal(ZStdMobilealpha))
+## StdMobilealpha Probability < 0
+inla.pmarginal(0, ZStdMobilealpha)
+## StdMobilealpha Probability > 0
+1 - inla.pmarginal(0, ZStdMobilealpha)
+# 
+# 
+# calc credible interval probability nonzero for variable 'StdHHPov'
+ZStdHHPovalpha <- rescTSz$marginals.fixed$ZStdHHPov
+# marg <- data.frame(inla.smarginal(ZStdHHPovalpha))
+## Probability StdHHPovalpha < 0
+inla.pmarginal(0, ZStdHHPovalpha)
+## Probability StdHHPovalpha > 0
+1 - inla.pmarginal(0, ZStdHHPovalpha)
+## compute the 95% HPD interval
+inla.hpdmarginal(0.95, ZStdHHPovalpha)
+# 
+# 
+# calc credible interval probability non zero for variable 'Z.score '
+Z.scorealpha <- rescTSz$marginals.fixed$Z.score
+# marg <- data.frame(inla.smarginal(Z.scorealpha))
+## Probability Z.score  < 0
+inla.pmarginal(0, Z.scorealpha)
+## Probability Z.score  > 0
+1 - inla.pmarginal(0, Z.scorealpha)
+# 
+# calc credible interval probability non zero for variable 'Z.score '
+ZStdUnemploalpha <- rescTSz$marginals.fixed$ZStdUnemplo
+# marg <- data.frame(inla.smarginal(ZStdUnemploalpha))
+#summary(rescTS$marginals.fixed$`slc:StdNonWhit`)
+## Probability Z.score  < 0
+inla.pmarginal(0, ZStdUnemploalpha)
+## Probability Z.score  > 0
+1 - inla.pmarginal(0, ZStdUnemploalpha)
+# 
+# 
+# # # calc credible interval probability nonzero for variable 'infratePer'
+ZinfratePeralpha <- rescTSz$marginals.fixed$ZinfratePer
+# marg <- data.frame(inla.smarginal(infratePeralpha))
+## Probability infratePer < 0
+inla.pmarginal(0, ZinfratePeralpha)
+## Probability infratePer > 0
+1 - inla.pmarginal(0, ZinfratePeralpha)
+# 
+# 
+# calc credible interval probability above zero for variable 'slc'
+slcalpha <- rescTSz$marginals.fixed$slc
+# marg <- data.frame(inla.smarginal(slcalpha))
+## slcalpha Probability < 0
+inla.pmarginal(0, slcalpha)
+## slcalpha Probability > 0
+1 - inla.pmarginal(0, slcalpha)
+
+# # calc credible interval probability below zero for variable 'StdNonWhit'
+ZStdNonWhitalpha <- rescTSz$marginals.fixed$ZStdNonWhit
+# marg <- data.frame(inla.smarginal(ZStdNonWhitalpha))
+## StdNonWhitalpha Probability < 0
+inla.pmarginal(0, ZStdNonWhitalpha)
+## StdNonWhitalpha Probability > 0
+1 - inla.pmarginal(0, ZStdNonWhitalpha)
+
+#names(rescTSz$marginals.fixed)
+# # calc credible interval probability below zero for variable 'StdNonWhit'
+zPopDensityalpha <- rescTSz$marginals.fixed$zPopDensity
+# marg <- data.frame(inla.smarginal(ZStdNonWhitalpha))
+## zPopDensityalpha Probability < 0
+inla.pmarginal(0, zPopDensityalpha)
+## zPopDensityalpha Probability > 0
+1 - inla.pmarginal(0, zPopDensityalpha)
+
+
+#names(rescTSz$marginals.fixed)
+# # calc credible interval probability below zero for variable 'summer'
+summeralpha <- rescTSz$marginals.fixed$summer
+# marg <- data.frame(inla.smarginal(ZStdNonWhitalpha))
+## summer Probability < 0
+inla.pmarginal(0, summeralpha)
+## summer Probability > 0
+1 - inla.pmarginal(0, summeralpha)
+
+# 
+# calc credible interval probability non zero for interaction term
+ZinfratePerZStdHHPovalpha <- rescTSz$marginals.fixed$'ZinfratePer:ZStdHHPov'
+# marg <- data.frame(inla.smarginal(ZinfratePerZStdHHPovalpha))
+## Probability interaction  < 0
+inla.pmarginal(0, ZinfratePerZStdHHPovalpha)
+## Probability interaction  > 0
+1 - inla.pmarginal(0, ZinfratePerZStdHHPovalpha)
+
+# plot_model(rescTSz$marginals.fixed, transform = NULL, show.values = TRUE, axis.labels = “”, value.offset = .4)
+
+```
+
+```{r plotInteractions}
+
+## ----------------------------------------------------------------------------
+## Coefficients
+coefs <- rescTSz$summary.fixed
+
+# coefs
+## Intercept
+b0 <- coefs[which(rownames(coefs) == "(Intercept)"), "mean"]
+## Poverty
+b1 <- coefs[which(rownames(coefs) == "ZStdHHPov"), "mean"]
+x1 <- seq(-3, 3, length = 100) 
+## Infection rate
+b2 <- coefs[which(rownames(coefs) == "ZinfratePer"), "mean"]
+x2 <- seq(-3, 3) ## PerWhite
+## Interaction
+b3 <- coefs[which(rownames(coefs) == "ZinfratePer:ZStdHHPov"), "mean"]
+
+myx <- expand.grid(ZStdHHPov = x1, ZinfratePer = x2)
+
+myx$log_theta <- b0 + b1 * myx$ZStdHHPov + b2 * myx$ZinfratePer +
+  b3 * (myx$ZStdHHPov * myx$ZinfratePer)
+
+myx$ZinfratePer <- as.factor(myx$ZinfratePer)
+myx$theta <- exp(myx$log_theta)
+
+p1 <- ggline(myx, x = "ZStdHHPov", y = "theta", 
+             col = "ZinfratePer", numeric.x.axis = TRUE, 
+             size = 1.5, plot_type = 'l',
+             xlab = "ZHH Poverty",
+             ylab = "Relative rate") + 
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  ggtitle("ZInteraction Poverty/ZInfection")
+print(p1)
+
+```
